@@ -1,47 +1,51 @@
-use std::{marker::PhantomData};
+use std::marker::PhantomData;
 
-use halo2_proofs::{arithmetic::FieldExt, circuit::*, plonk::*, poly::Rotation, pasta::Fp, dev::MockProver};
-
+use halo2_proofs::{arithmetic::FieldExt, circuit::*, plonk::*, poly::Rotation};
 
 #[derive(Debug, Clone)]
 struct ACell<F: FieldExt>(AssignedCell<F, F>);
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 struct FiboConfig {
     pub advice: [Column<Advice>; 3],
     pub selector: Selector,
     pub instance: Column<Instance>,
 }
 
+#[derive(Debug, Clone)]
 struct FiboChip<F: FieldExt> {
     config: FiboConfig,
     _marker: PhantomData<F>,
 }
 
 impl<F: FieldExt> FiboChip<F> {
-    fn construct(config: FiboConfig) -> Self {
+    pub fn construct(config: FiboConfig) -> Self {
         Self {
             config,
             _marker: PhantomData,
         }
     }
 
-    // instance は public inputs 用の column
-    fn configure(meta: &mut ConstraintSystem<F>, advice: [Column<Advice>; 3], instance: Column<Instance>,) -> FiboConfig {
+    pub fn configure(
+        meta: &mut ConstraintSystem<F>,
+        advice: [Column<Advice>; 3],
+        instance: Column<Instance>,
+    ) -> FiboConfig {
         let col_a = advice[0];
         let col_b = advice[1];
         let col_c = advice[2];
         let selector = meta.selector();
 
-        // copy constraint を追加するために enable_equality で有効化する必要がある
         meta.enable_equality(col_a);
         meta.enable_equality(col_b);
         meta.enable_equality(col_c);
         meta.enable_equality(instance);
 
         meta.create_gate("add", |meta| {
+            //
             // col_a | col_b | col_c | selector
-            //    a       b      c        s
+            //   a      b        c       s
+            //
             let s = meta.query_selector(selector);
             let a = meta.query_advice(col_a, Rotation::cur());
             let b = meta.query_advice(col_b, Rotation::cur());
@@ -52,7 +56,7 @@ impl<F: FieldExt> FiboChip<F> {
         FiboConfig {
             advice: [col_a, col_b, col_c],
             selector,
-            instance
+            instance,
         }
     }
 
@@ -114,8 +118,12 @@ impl<F: FieldExt> FiboChip<F> {
         )
     }
 
-    pub fn expose_public(&self,  mut layouter: impl Layouter<F>, cell: &ACell<F>, row: usize) -> Result<(), Error> {
-        // cell が instance の row で指定されところと一致する constraint を作成
+    pub fn expose_public(
+        &self,
+        mut layouter: impl Layouter<F>,
+        cell: &ACell<F>,
+        row: usize,
+    ) -> Result<(), Error> {
         layouter.constrain_instance(cell.0.cell(), self.config.instance, row)
     }
 }
@@ -142,7 +150,11 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
         FiboChip::configure(meta, [col_a, col_b, col_c], instance)
     }
 
-    fn synthesize(&self, config: Self::Config, mut layouter: impl Layouter<F>) -> Result<(), Error> {
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        mut layouter: impl Layouter<F>,
+    ) -> Result<(), Error> {
         let chip = FiboChip::construct(config);
 
         let (prev_a, mut prev_b, mut prev_c) =
@@ -163,26 +175,50 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
     }
 }
 
-fn main() {
+#[cfg(test)]
+mod tests {
+    use super::MyCircuit;
+    use halo2_proofs::{circuit::Value, dev::MockProver, pasta::Fp};
 
-    let k = 4;
+    #[test]
+    fn test_example1() {
+        let k = 4;
 
-    let a = Fp::from(1); // F[0]
-    let b = Fp::from(1); // F[1]
-    let out = Fp::from(55); // F[9]
+        let a = Fp::from(1); // F[0]
+        let b = Fp::from(1); // F[1]
+        let out = Fp::from(55); // F[9]
 
-    let mut public_input = vec![a, b, out];
+        let circuit = MyCircuit {
+            a: Value::known(a),
+            b: Value::known(b),
+        };
 
-    let circuit = MyCircuit {
-        a: Value::known(a),
-        b: Value::known(b)
-    };
+        let mut public_input = vec![a, b, out];
 
-    let prover = MockProver::run(k, &circuit, vec![public_input.clone()]).unwrap();
-    prover.assert_satisfied();
+        let prover = MockProver::run(k, &circuit, vec![public_input.clone()]).unwrap();
+        prover.assert_satisfied();
 
-    public_input[2] += Fp::one();
-    let _prover = MockProver::run(k, &circuit, vec![public_input]).unwrap();
-    // uncomment the following line and the assert will fail
-    // _prover.assert_satisfied();
+        public_input[2] += Fp::one();
+        let _prover = MockProver::run(k, &circuit, vec![public_input]).unwrap();
+        // uncomment the following line and the assert will fail
+        // _prover.assert_satisfied();
+    }
+
+    #[cfg(feature = "dev-graph")]
+    #[test]
+    fn plot_fibo1() {
+        use plotters::prelude::*;
+
+        let root = BitMapBackend::new("fib-1-layout.png", (1024, 3096)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let root = root.titled("Fib 1 Layout", ("sans-serif", 60)).unwrap();
+
+        let circuit = MyCircuit::<Fp> {
+            a: Value::unknown(),
+            b: Value::unknown(),
+        };
+        halo2_proofs::dev::CircuitLayout::default()
+            .render(4, &circuit, &root)
+            .unwrap();
+    }
 }

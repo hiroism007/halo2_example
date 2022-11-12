@@ -13,9 +13,6 @@ path = "src/lib.rs"
 [features]
 dev-graph = ["halo2_proofs/dev-graph", "plotters"]
 
-[[bin]]
-name = "example1"
-path = "src/example1.rs"
 
 
 [dependencies]

@@ -1,34 +1,31 @@
+use halo2_proofs::{arithmetic::FieldExt, circuit::*, plonk::*, poly::Rotation};
 use std::marker::PhantomData;
-
-use halo2_proofs::{
-    arithmetic::FieldExt, circuit::*, dev::MockProver, pasta::Fp, plonk::*, poly::Rotation,
-};
 
 #[derive(Debug, Clone)]
 struct ACell<F: FieldExt>(AssignedCell<F, F>);
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 struct FiboConfig {
-    pub advice: Column<Advice>,
-    pub selector: Selector,
-    pub instance: Column<Instance>,
+    advice: Column<Advice>,
+    selector: Selector,
+    instance: Column<Instance>,
 }
 
+#[derive(Debug, Clone)]
 struct FiboChip<F: FieldExt> {
     config: FiboConfig,
     _marker: PhantomData<F>,
 }
 
 impl<F: FieldExt> FiboChip<F> {
-    fn construct(config: FiboConfig) -> Self {
+    pub fn construct(config: FiboConfig) -> Self {
         Self {
             config,
             _marker: PhantomData,
         }
     }
 
-    // instance は public inputs 用の column
-    fn configure(
+    pub fn configure(
         meta: &mut ConstraintSystem<F>,
         advice: Column<Advice>,
         instance: Column<Instance>,
@@ -40,10 +37,12 @@ impl<F: FieldExt> FiboChip<F> {
         meta.enable_equality(instance);
 
         meta.create_gate("add", |meta| {
-            // col_a  | selector
-            //    a       s
-            //    b
-            //    c
+            //
+            // advice | selector
+            //   a    |   s
+            //   b    |
+            //   c    |
+            //
             let s = meta.query_selector(selector);
             let a = meta.query_advice(advice, Rotation::cur());
             let b = meta.query_advice(advice, Rotation::next());
@@ -58,7 +57,6 @@ impl<F: FieldExt> FiboChip<F> {
         }
     }
 
-    #[allow(clippy::type_complexity)]
     pub fn assign(
         &self,
         mut layouter: impl Layouter<F>,
@@ -68,6 +66,7 @@ impl<F: FieldExt> FiboChip<F> {
             || "entire fibonacci table",
             |mut region| {
                 self.config.selector.enable(&mut region, 0)?;
+                self.config.selector.enable(&mut region, 1)?;
 
                 let mut a_cell = region.assign_advice_from_instance(
                     || "1",
@@ -76,7 +75,6 @@ impl<F: FieldExt> FiboChip<F> {
                     self.config.advice,
                     0,
                 )?;
-
                 let mut b_cell = region.assign_advice_from_instance(
                     || "1",
                     self.config.instance,
@@ -85,11 +83,11 @@ impl<F: FieldExt> FiboChip<F> {
                     1,
                 )?;
 
-                // 2 <= row < 9
+                // 2 <= row <= 9
                 for row in 2..nrows {
+
                     // index ７ までの selector を enable する
                     // => index 9 の assginment まで
-
                     if row < nrows - 2 {
                         self.config.selector.enable(&mut region, row)?;
                     }
@@ -123,7 +121,6 @@ impl<F: FieldExt> FiboChip<F> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use halo2_proofs::{dev::MockProver, pasta::Fp};
 
@@ -151,9 +148,9 @@ mod tests {
         ) -> Result<(), Error> {
             let chip = FiboChip::construct(config);
 
-            let output_cell = chip.assign(layouter.namespace(|| "entire table"), 10)?;
+            let out_cell = chip.assign(layouter.namespace(|| "entire table"), 10)?;
 
-            chip.expose_public(layouter.namespace(|| "out"), output_cell, 2)?;
+            chip.expose_public(layouter.namespace(|| "out"), out_cell, 2)?;
 
             Ok(())
         }
@@ -167,12 +164,17 @@ mod tests {
         let b = Fp::from(1); // F[1]
         let out = Fp::from(55); // F[9]
 
-        let public_input = vec![a, b, out];
-
         let circuit = MyCircuit(PhantomData);
+
+        let mut public_input = vec![a, b, out];
 
         let prover = MockProver::run(k, &circuit, vec![public_input.clone()]).unwrap();
         prover.assert_satisfied();
+
+        public_input[2] += Fp::one();
+        let _prover = MockProver::run(k, &circuit, vec![public_input]).unwrap();
+        // uncomment the following line and the assert will fail
+        // _prover.assert_satisfied();
     }
 
     #[cfg(feature = "dev-graph")]
